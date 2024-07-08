@@ -75,20 +75,21 @@ class HX711_ADC
 		void powerUp(); 							//power up the HX711
 		long getTareOffset();						//get the tare offset (raw data value output without the scale "calFactor")
 		void setTareOffset(long newoffset);			//set new tare offset (raw data value input without the scale "calFactor")
-		uint8_t update(); 							//if conversion is ready; read out 24 bit data and add to dataset
+		uint8_t update(bool discard = false); 				//if conversion is ready; read out 24 bit data (and add to dataset unless discard is true)
 		bool dataWaitingAsync(); 					//checks if data is available to read (no conversion yet)
 		bool updateAsync(); 						//read available data and add to dataset 
 		void setSamplesInUse(int samples);			//overide number of samples in use
 		int getSamplesInUse();						//returns current number of samples in use
 		void resetSamplesIndex();					//resets index for dataset
 		bool refreshDataSet();						//Fill the whole dataset up with new conversions, i.e. after a reset/restart (this function is blocking once started)
+		bool clearDataSet();						//Fill the whole dataset up with zeros
 		bool getDataSetStatus();					//returns 'true' when the whole dataset has been filled up with conversions, i.e. after a reset/restart
 		float getNewCalibration(float known_mass);	//returns and sets a new calibration value (calFactor) based on a known mass input
 		bool getSignalTimeoutFlag();				//returns 'true' if it takes longer time then 'SIGNAL_TIMEOUT' for the dout pin to go low after a new conversion is started
 		void setReverseOutput();					//reverse the output value
 
 	protected:
-		void conversion24bit(); 					//if conversion is ready: returns 24 bit data and starts the next conversion
+		void conversion24bit(bool discard = false); 			//if conversion is ready: returns 24 bit data and starts the next conversion
 		long smoothedData();						//returns the smoothed data value calculated from the dataset
 		uint8_t sckPin; 							//HX711 pd_sck pin
 		uint8_t doutPin; 							//HX711 dout pin

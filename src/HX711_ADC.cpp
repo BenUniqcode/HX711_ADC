@@ -51,7 +51,7 @@ void HX711_ADC::start(unsigned long t)
 	lastDoutLowTime = millis();
 	while(millis() < startTime + t) 
 	{
-		update();
+		update(true);
 		yield();
 	}
 	tare();
@@ -68,7 +68,7 @@ void HX711_ADC::start(unsigned long t, bool dotare)
 	lastDoutLowTime = millis();
 	while(millis() < startTime + t) 
 	{
-		update();
+		update(true);
 		yield();
 	}
 	if (dotare)
@@ -232,15 +232,15 @@ float HX711_ADC::getCalFactor()
 }
 
 //call the function update() in loop or from ISR
-//if conversion is ready; read out 24 bit data and add to dataset, returns 1
+//if conversion is ready; read out 24 bit data and add to dataset (unless discard is true), returns 1
 //if tare operation is complete, returns 2
 //else returns 0
-uint8_t HX711_ADC::update() 
+uint8_t HX711_ADC::update(bool discard) 
 {
 	byte dout = digitalRead(doutPin); //check if conversion is ready
 	if (!dout) 
 	{
-		conversion24bit();
+		conversion24bit(discard);
 		lastDoutLowTime = millis();
 		signalTimeoutFlag = 0;
 	}
@@ -309,8 +309,14 @@ long HX711_ADC::smoothedData()
 	long data = 0;
 	long L = 0xFFFFFF;
 	long H = 0x00;
+	int nSamples = samplesInUse;
 	for (uint8_t r = 0; r < (samplesInUse + IGN_HIGH_SAMPLE + IGN_LOW_SAMPLE); r++) 
 	{
+		// Ignore 0 readings
+		if (dataSampleSet[r] == 0) {
+			nSamples--;
+			continue;
+		}
 		#if IGN_LOW_SAMPLE
 		if (L > dataSampleSet[r]) L = dataSampleSet[r]; // find lowest value
 		#endif
@@ -320,17 +326,24 @@ long HX711_ADC::smoothedData()
 		data += dataSampleSet[r];
 	}
 	#if IGN_LOW_SAMPLE 
-	data -= L; //remove lowest value
+	if (L < 0xFFFFFF) {
+		data -= L; //remove lowest value
+	}
 	#endif
 	#if IGN_HIGH_SAMPLE 
-	data -= H; //remove highest value
+	if (H > 0x00) {
+		data -= H; //remove highest value
+	}
 	#endif
 	//return data;
-	return (data >> divBit);
+	if (nSamples) {
+		return (data / nSamples);
+	}
+	return 0;
 
 }
 
-void HX711_ADC::conversion24bit()  //read 24 bit data, store in dataset and start the next conversion
+void HX711_ADC::conversion24bit(bool discard)  //read 24 bit data, store in dataset (unless discard is true) and start the next conversion
 {
 	conversionTime = micros() - conversionStartTime;
 	conversionStartTime = micros();
@@ -380,7 +393,7 @@ void HX711_ADC::conversion24bit()  //read 24 bit data, store in dataset and star
 	if(data > 0)  
 	{
 		convRslt++;
-		dataSampleSet[readIndex] = (long)data;
+		dataSampleSet[readIndex] = discard ? 0L : (long)data;
 		if(doTare) 
 		{
 			if (tareTimes < DATA_SET) 
@@ -466,8 +479,7 @@ long HX711_ADC::getSettlingTime()
 	return st;
 }
 
-//overide the number of samples in use
-//value is rounded down to the nearest valid value
+//overide the number of samples in use. 0 = default.
 void HX711_ADC::setSamplesInUse(int samples)
 {
 	int old_value = samplesInUse;
@@ -476,23 +488,17 @@ void HX711_ADC::setSamplesInUse(int samples)
 	{
 		if(samples == 0) //reset to the original value
 		{
-			divBit = divBitCompiled;
+			samplesInUse = SAMPLES;
 		} 
 		else
 		{
-			samples >>= 1;
-			for(divBit = 0; samples != 0; samples >>= 1, divBit++);
+			samplesInUse = samples;
 		}
-		samplesInUse = 1 << divBit;
 		
-		//replace the value of all samples in use with the last conversion value
 		if(samplesInUse != old_value) 
 		{
-			for (uint8_t r = 0; r < samplesInUse + IGN_HIGH_SAMPLE + IGN_LOW_SAMPLE; r++) 
-			{
-				dataSampleSet[r] = lastSmoothedData;
-			}
-			readIndex = 0;
+			//replace the value of all samples in use with the last conversion value
+			clearDataSet();
 		}
 	}
 }
@@ -521,6 +527,20 @@ bool HX711_ADC::refreshDataSet()
 			getData(); // add data to the set and start next conversion
 			s--;
 		}
+	}
+	return true;
+}
+// Clear the dataset - this quickly gets rid of any anomalous readings without blocking, at the cost of 
+// the next few readings being unsmoothed / less smoothed. If you want to wait until fully smoothed data
+// is available, use refreshDataSet() instead.
+bool HX711_ADC::clearDataSet()
+{
+	int s = getSamplesInUse() + IGN_HIGH_SAMPLE + IGN_LOW_SAMPLE; // get number of samples in dataset
+	resetSamplesIndex();
+
+	while (s > 0) {
+		dataSampleSet[s] = 0;
+		s--;
 	}
 	return true;
 }
